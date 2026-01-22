@@ -7,6 +7,7 @@ import smtplib
 from email.header import Header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formataddr  # ✅ 新增：用于标准化发信地址格式
 
 from flask import render_template
 
@@ -21,77 +22,109 @@ def email_task(
     text_content=None,
     reply_address=None,
     from_address=None,
-    from_username=None,
+    from_username=None, # 注意：这里的语义被修正为“发件人昵称/别名”
 ):
     """发送邮件"""
-    if not celery.conf.app_config["ENABLE_USER_EMAIL"]:
+    # 1. 检查配置开关
+    if not celery.conf.app_config.get("ENABLE_USER_EMAIL"):
         return "未开启用户邮件配置"
-    email_smtp_host = celery.conf.app_config["EMAIL_SMTP_HOST"]
-    email_smtp_port = celery.conf.app_config["EMAIL_SMTP_PORT"]
-    email_use_ssl = celery.conf.app_config["EMAIL_USE_SSL"]
-    email_address = celery.conf.app_config["EMAIL_ADDRESS"]
-    email_username = celery.conf.app_config["EMAIL_USERNAME"]
-    email_password = celery.conf.app_config["EMAIL_PASSWORD"]
-    email_reply_address = celery.conf.app_config["EMAIL_REPLY_ADDRESS"]
-    if from_address is None:
-        from_address = email_address
-    if from_username is None:
-        from_username = email_username
+
+    # 2. 读取配置
+    conf = celery.conf.app_config
+    email_smtp_host = conf.get("EMAIL_SMTP_HOST")
+    email_smtp_port = int(conf.get("EMAIL_SMTP_PORT", 465))
+    email_use_ssl = conf.get("EMAIL_USE_SSL")
+
+    # 账号凭证 (用于登录 SMTP)
+    email_account = conf.get("EMAIL_ADDRESS")
+    email_password = conf.get("EMAIL_PASSWORD")
+
+    # 默认值处理
+    # 如果调用时没传 from_address，则使用配置中的发信邮箱
+    current_from_email = from_address if from_address else email_account
+
+    # 确定“发件人显示名称” (即 Alias，例如 "keli")
+    # 优先级：函数参数 > 配置文件 > 默认邮箱前缀
+    config_sender_name = conf.get("EMAIL_SENDER_NAME")
+
+    if from_username:
+        display_name = from_username
+    elif config_sender_name:
+        display_name = config_sender_name
+    else:
+        display_name = ""
+
+    # 处理回复地址
     if reply_address is None:
-        reply_address = email_reply_address
-    # 构建alternative结构
+        reply_address = conf.get("EMAIL_REPLY_ADDRESS")
+
+    # 3. 构建邮件对象
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = Header(subject).encode()
-    msg["From"] = "%s <%s>" % (Header(from_username).encode(), from_address)
-    msg["To"] = (
-        to_address  # 收件人地址或是地址列表，支持多个收件人，最多30个 ['***', '***']
-    )
-    msg["Reply-to"] = reply_address  # 自定义的回复地址
+    msg["Subject"] = Header(subject, 'utf-8').encode()
+
+    # ✅ 核心修复：使用 formataddr 生成标准的 "Name <email@domain.com>" 格式
+    # 这解决了腾讯云报错 "InvalidParameterValue"
+    msg["From"] = formataddr((display_name, current_from_email))
+
+    # 处理收件人 (支持列表或字符串)
+    if isinstance(to_address, list):
+        msg["To"] = ",".join(to_address)
+    else:
+        msg["To"] = to_address
+
+    msg["Reply-to"] = reply_address
     msg["Message-id"] = email.utils.make_msgid()
     msg["Date"] = email.utils.formatdate()
-    # 构建alternative的text/html部分
-    text_html = MIMEText(html_content.encode(), _subtype="html", _charset="UTF-8")
-    msg.attach(text_html)
-    # 构建alternative的text/plain部分
+
+    # 构建邮件正文
+    if html_content:
+        text_html = MIMEText(html_content, _subtype="html", _charset="UTF-8")
+        msg.attach(text_html)
+
     if text_content:
-        text_plain = MIMEText(text_content.encode(), _subtype="plain", _charset="UTF-8")
+        text_plain = MIMEText(text_content, _subtype="plain", _charset="UTF-8")
         msg.attach(text_plain)
-    # 发送邮件
+
+    # 4. 发送邮件
+    client = None
     try:
-        # 是否使用ssl
+        # ✅ 修复超时：增加 timeout=10 防止 Worker 卡死
         if email_use_ssl:
-            client = smtplib.SMTP_SSL(email_smtp_host, email_smtp_port)
+            client = smtplib.SMTP_SSL(email_smtp_host, email_smtp_port, timeout=10)
         else:
-            client = smtplib.SMTP(email_smtp_host, email_smtp_port)
-        if not email_use_ssl:
+            client = smtplib.SMTP(email_smtp_host, email_smtp_port, timeout=10)
             try:
                 client.starttls()
-                # client.ehlo_or_helo_if_needed()
             except smtplib.SMTPNotSupportedError:
                 pass
-        # 开启DEBUG模式
-        client.set_debuglevel(0)
-        client.login(from_username, email_password)
-        # 发件人和认证地址必须一致
-        # 备注：若想取到DATA命令返回值,可参考smtplib的sendmaili封装方法:
-        #      使用SMTP.mail/SMTP.rcpt/SMTP.data方法
-        client.sendmail(from_address, to_address, msg.as_string())
+
+        # client.set_debuglevel(1) # 调试时可开启
+
+        # ✅ 核心修复：登录必须使用“配置的账号”，而不是“显示别名”
+        # 原代码 client.login(from_username, ...) 是错误的，会导致认证失败
+        client.login(email_account, email_password)
+
+        # 发送
+        # 注意：sendmail 的第一个参数 (Envelope From) 必须是经过验证的邮箱地址
+        client.sendmail(current_from_email, to_address, msg.as_string())
         client.quit()
         return "发送成功"
+
     except smtplib.SMTPConnectError as e:
-        return "发送失败，连接失败:", str(e.smtp_code), str(e.smtp_error)
+        return f"发送失败，连接失败: {e.smtp_code} {e.smtp_error}"
     except smtplib.SMTPAuthenticationError as e:
-        return "发送失败，认证错误:", str(e.smtp_code), str(e.smtp_error)
+        return f"发送失败，认证错误: {e.smtp_code} {e.smtp_error}"
     except smtplib.SMTPSenderRefused as e:
-        return "发送失败，发件人被拒绝:", str(e.smtp_code), str(e.smtp_error)
+        return f"发送失败，发件人被拒绝: {e.smtp_code} {e.smtp_error}"
     except smtplib.SMTPRecipientsRefused as e:
-        return "发送失败，收件人被拒绝:", str(e.smtp_code), str(e.smtp_error)
+        return f"发送失败，收件人被拒绝: {e.smtp_code} {e.smtp_error}"
     except smtplib.SMTPDataError as e:
-        return "发送失败，数据接收拒绝:", str(e.smtp_code), str(e.smtp_error)
+        return f"发送失败，数据接收拒绝: {e.smtp_code} {e.smtp_error}"
     except smtplib.SMTPException as e:
-        return "发送失败, ", str(e.message)
+        # ✅ 修复 AttributeError: Python3 异常没有 .message 属性
+        return f"发送失败, SMTP异常: {str(e)}"
     except Exception as e:
-        return "发送异常, ", str(e)
+        return f"发送异常, 未知错误: {str(e)}"
 
 
 def send_email(
@@ -105,10 +138,20 @@ def send_email(
     template=None,
     template_data=None,
 ):
+    """
+    对外调用的发送接口
+    """
     # 如果提供了模板，则使用模板创建内容
     if template:
-        html_content = render_template(template + ".html", **template_data)
-        text_content = render_template(template + ".txt", **template_data)
+        # 确保 template_data 不是 None
+        data = template_data if template_data else {}
+        html_content = render_template(template + ".html", **data)
+        # 尝试渲染 txt 模板，如果不存在可能会报错，建议加个 try-except 或者确保文件存在
+        try:
+            text_content = render_template(template + ".txt", **data)
+        except Exception:
+            pass # 忽略 txt 模板缺失
+
     email_task.delay(
         to_address,
         subject,
