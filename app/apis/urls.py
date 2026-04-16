@@ -39,6 +39,7 @@ from app.apis.project import (
     ProjectResumeAPI,
     ProjectTargetListAPI,
     ProjectTargetOutputListAPI,
+    ProjectMemberBatchAddAPI,
 )
 from app.apis.project_set import ProjectSetAPI
 
@@ -318,6 +319,11 @@ project.add_url_rule(
     "/<project_id>/ocr",
     methods=["POST", "OPTIONS"],
     view_func=ProjectOCRAPI.as_view("project_ocr"),
+)
+project.add_url_rule(
+    "/<project_id>/users/<user_id>/add-to-project-set",
+    methods=["POST", "OPTIONS"],
+    view_func=ProjectMemberBatchAddAPI.as_view("project_member_batch_add"),
 )
 # 文件模块
 file = Blueprint("file", __name__, url_prefix=v1_prefix + "/files")

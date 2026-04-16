@@ -4,7 +4,7 @@ from app.tasks.ocr import ocr
 from app.models.team import TeamPermission
 import datetime
 from app.exceptions.project import ProjectFinishedError, TargetNotExistError
-from flask import current_app
+from flask import current_app, request
 from flask_babel import gettext
 
 from app.core.views import MoeAPIView
@@ -14,9 +14,12 @@ from app.exceptions import (
     NoPermissionError,
     ProjectNotFinishedError,
     RequestDataEmptyError,
+    RoleNotExistError,
 )
 from app.models.project import Project, ProjectPermission
+from app.models.user import User
 from app.models.target import Target
+from app.models.team import TeamPermission
 from app.models.output import Output
 from app.constants.project import ProjectStatus
 from app.validators.project import (
@@ -493,3 +496,46 @@ class ProjectFinishPlanAPI(MoeAPIView):
             raise NoPermissionError
         project.cancel_finish_plan()
         return {"message": gettext("完结计划取消成功")}
+
+
+class ProjectMemberBatchAddAPI(MoeAPIView):
+    @token_required
+    @fetch_model(Project, 'project_id')
+    @fetch_model(User, 'user_id')
+    def post(self, project, user):
+        """批量将成员增量添加到项目集内的所有项目"""
+        project_set = project.project_set
+        if not project_set:
+            return {"message": gettext("当前项目未关联项目集")}, 400
+
+        # 1. 检查是否有操作该项目集的权限
+        if not self.current_user.can(project.team, TeamPermission.CHANGE_PROJECT_SET):
+            raise NoPermissionError
+
+        data = request.get_json() or {}
+        role_id = data.get("role_id")
+        if not role_id:
+            return {"message": gettext("缺少角色信息")}, 400
+
+        # 2. 获取真正的 Role 对象
+        role = project.role_cls.objects(id=role_id).first()
+        if role is None:
+            raise RoleNotExistError
+
+        # 3. 越权保护（可选）：防止低权限用户赋予别人高权限角色
+        self_role = self.current_user.get_role(project)
+        if self_role and self_role.level <= role.level:
+            # 注：如果你希望系统创建者可以无视这个规则，可以在这里加个 is_creator 的判断
+            raise NoPermissionError(gettext("赋予的角色等级需要比您低"))
+
+        added_count = 0
+
+        # 4. 查出该项目集下所有的有效项目
+        projects_in_set = Project.objects(project_set=project_set, status=ProjectStatus.WORKING)
+
+        for p in projects_in_set:
+            if not user.get_relation(p):
+                user.join(p, role=role)
+                added_count += 1
+
+        return {"message": gettext("成功将成员以相同角色增量添加到 {} 个项目中").format(added_count)}
