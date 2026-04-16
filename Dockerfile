@@ -3,7 +3,7 @@ FROM python:3.11
 LABEL project="moeflow-backend"
 
 COPY ./requirements.txt /tmp/requirements.txt
-RUN pip install -r /tmp/requirements.txt
+RUN pip install -r /tmp/requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 ARG MOEFLOW_BUILD_ID=unknown
 ENV MOEFLOW_BUILD_ID=${MOEFLOW_BUILD_ID}
