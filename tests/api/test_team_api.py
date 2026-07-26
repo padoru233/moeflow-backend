@@ -1121,9 +1121,7 @@ class TeamProjectSetAPITestCase(MoeAPITestCase):
                 robot_webhook_group_id="123456789",
             )
             # 创建project set
-            with patch("app.tasks.robot_webhook.requests.post") as mock_post, patch(
-                "app.models.project.celery.control.ping", return_value=[]
-            ):
+            with patch("app.models.project.requests.post") as mock_post:
                 mock_post.return_value.raise_for_status.return_value = None
                 data = self.post(
                     f"/v1/teams/{str(team1.id)}/project-sets",

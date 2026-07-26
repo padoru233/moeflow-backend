@@ -509,10 +509,18 @@ class User(Document):
             # 减少团体人数计数
             group.update(dec__user_count=1)
             if isinstance(group, Project):
-                # 机器人播报为异步执行，失败只会在后台记录警告日志，不影响退出团队本身
-                group.notify_member_change(
+                result = group.notify_member_change(
                     self.name, role.system_code, "removed"
                 )
+                if (
+                    not result["delivered"]
+                    and result["error"] != "webhook_disabled_or_missing_url"
+                ):
+                    logger.warning(
+                        "Failed to notify Bot of member removal project_id=%s: %s",
+                        group.id,
+                        result["error"],
+                    )
 
     def get_role(self, group):
         """获取在group中的角色"""

@@ -69,8 +69,7 @@ from app.constants.project import (
     ProjectStatus,
 )
 from app.utils.mongo import mongo_order, mongo_slice
-from app import celery
-from app.tasks.robot_webhook import notify_team_robot_task
+import requests
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -80,29 +79,37 @@ def notify_team_robot(team, endpoint, payload, timeout=15):
     """
     通知对接的 QQ 机器人。
 
-    项目/项目集的创建不应该依赖机器人是否在线：这里只负责把通知异步派发出去
-    （有空闲 worker 时走消息队列，没有的话退化为同步执行，但依然不会抛出异常），
-    真正的播报失败只会在后台记录一条警告日志，不会影响调用方。
+    项目/项目集的创建不依赖机器人是否在线：创建操作总会先完成，这里只是紧接着
+    尝试通知一下机器人；如果机器人不在线/超时/报错，只会返回 delivered=False，
+    调用方会记录一条警告日志，并可以据此在前端弹出一个"播报失败"的提示，但不会
+    影响项目/项目集本身已经创建成功。
     """
     if not team.robot_webhook_enabled or not team.robot_webhook_url:
-        return {"queued": False, "reason": "webhook_disabled_or_missing_url"}
-    args = (
-        team.robot_webhook_url,
-        endpoint,
-        payload,
-        team.robot_webhook_auth_token,
-        timeout,
-    )
+        return {"delivered": False, "error": "webhook_disabled_or_missing_url"}
     try:
-        alive_workers = celery.control.ping(timeout=0.5)
-    except Exception:
-        alive_workers = []
-    if alive_workers:
-        notify_team_robot_task.delay(*args)
-    else:
-        # 没有存活的 worker，退化为同步执行；失败只在任务内部记录警告日志
-        notify_team_robot_task(*args)
-    return {"queued": True}
+        headers = {}
+        if team.robot_webhook_auth_token:
+            headers["X-Auth-Token"] = team.robot_webhook_auth_token
+        webhook_url = team.robot_webhook_url.rstrip("/")
+        if webhook_url.endswith("/episode/complete"):
+            webhook_url = webhook_url[: -len("/episode/complete")]
+        response = requests.post(
+            webhook_url + endpoint,
+            json=payload,
+            headers=headers or None,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return {"delivered": True}
+    except requests.HTTPError as exc:
+        response = exc.response
+        try:
+            detail = response.json().get("detail")
+        except (AttributeError, ValueError):
+            detail = None
+        return {"delivered": False, "error": str(detail or exc)}
+    except Exception as exc:
+        return {"delivered": False, "error": str(exc)}
 
 
 class ProjectAllowApplyType(AllowApplyType):

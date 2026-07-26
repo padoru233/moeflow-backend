@@ -471,9 +471,7 @@ class ProjectAPITestCase(MoeAPITestCase):
             robot_webhook_auth_token="secret-token",
         )
 
-        with patch("app.tasks.robot_webhook.requests.post") as mock_post, patch(
-            "app.models.project.celery.control.ping", return_value=[]
-        ):
+        with patch("app.models.project.requests.post") as mock_post:
             mock_post.return_value.raise_for_status.return_value = None
             data = self.post(
                 f"/v1/projects/{str(project.id)}/task-completion",
@@ -481,7 +479,7 @@ class ProjectAPITestCase(MoeAPITestCase):
             )
 
         self.assertErrorEqual(data)
-        self.assertTrue(data.json["queued"])
+        self.assertTrue(data.json["delivered"])
         self.assertEqual(
             "https://bot.example.com/trans/episode/complete",
             mock_post.call_args.args[0],
@@ -513,7 +511,7 @@ class ProjectAPITestCase(MoeAPITestCase):
             robot_webhook_auth_token="secret-token",
         )
 
-        with patch("app.tasks.robot_webhook.requests.post") as mock_post:
+        with patch("app.models.project.requests.post") as mock_post:
             mock_post.return_value.raise_for_status.return_value = None
             translator.join(
                 project, role=ProjectRole.by_system_code("translator")
@@ -532,7 +530,7 @@ class ProjectAPITestCase(MoeAPITestCase):
             robot_webhook_auth_token="secret-token",
         )
 
-        with patch("app.tasks.robot_webhook.requests.post") as mock_post:
+        with patch("app.models.project.requests.post") as mock_post:
             Project.create(name="task", team=team, creator=creator)
 
         mock_post.assert_not_called()
@@ -549,9 +547,7 @@ class ProjectAPITestCase(MoeAPITestCase):
             robot_webhook_group_id="123456789",
         )
 
-        with patch("app.tasks.robot_webhook.requests.post") as mock_post, patch(
-            "app.models.project.celery.control.ping", return_value=[]
-        ):
+        with patch("app.models.project.requests.post") as mock_post:
             mock_post.return_value.raise_for_status.return_value = None
             data = self.post(
                 f"/v1/teams/{str(team.id)}/projects",
@@ -1850,14 +1846,12 @@ class ProjectAPITestCase(MoeAPITestCase):
             robot_webhook_auth_token="secret-token",
         )
 
-        with patch("app.tasks.robot_webhook.requests.post") as mock_post, patch(
-            "app.models.project.celery.control.ping", return_value=[]
-        ):
+        with patch("app.models.project.requests.post") as mock_post:
             mock_post.return_value.raise_for_status.return_value = None
             data = self.delete(f"/v1/projects/{str(project.id)}", token=token)
 
         self.assertErrorEqual(data)
-        self.assertTrue(data.json["robot_sync"]["queued"])
+        self.assertTrue(data.json["robot_sync"]["delivered"])
         self.assertEqual(
             "https://bot.example.com/trans/episode/manual-complete",
             mock_post.call_args.args[0],
