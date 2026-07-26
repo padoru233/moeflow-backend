@@ -183,6 +183,20 @@ class TeamAPI(MoeAPIView):
         if data:
             team.update(**data)
             team.reload()
+            # 开启机器人对接后，把团队下所有已存在的项目集同步给 bot
+            # （否则只有"新建项目集"时才会同步，已有的项目组无法绑定到 bot 管理）
+            if team.robot_webhook_enabled and team.robot_webhook_url:
+                for project_set in team.project_sets():
+                    result = project_set.ensure_robot_project()
+                    if (
+                        not result["delivered"]
+                        and result["error"] != "webhook_disabled_or_missing_url"
+                    ):
+                        current_app.logger.warning(
+                            "Failed to sync Bot project project_set_id=%s: %s",
+                            project_set.id,
+                            result["error"],
+                        )
             return {
                 "message": gettext("修改成功"),
                 "team": team.to_api(user=self.current_user),
