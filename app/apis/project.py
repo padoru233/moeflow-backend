@@ -125,16 +125,8 @@ class ProjectAPI(MoeAPIView):
         if not self.current_user.can(project, ProjectPermission.FINISH):
             raise NoPermissionError
         project.finish()
+        # 机器人播报为异步执行，播报失败只会在后台记录警告日志，不影响项目完结本身
         robot_sync = project.notify_manual_completion()
-        if (
-            not robot_sync["delivered"]
-            and robot_sync["error"] != "webhook_disabled_or_missing_url"
-        ):
-            current_app.logger.warning(
-                "Failed to manually complete Bot episode project_id=%s: %s",
-                project.id,
-                robot_sync["error"],
-            )
         return {"message": gettext("完结项目成功"), "robot_sync": robot_sync}
 
 

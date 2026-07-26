@@ -185,18 +185,10 @@ class TeamAPI(MoeAPIView):
             team.reload()
             # 开启机器人对接后，把团队下所有已存在的项目集同步给 bot
             # （否则只有"新建项目集"时才会同步，已有的项目组无法绑定到 bot 管理）
+            # 同步现在是异步执行的，失败只会在后台记录警告日志
             if team.robot_webhook_enabled and team.robot_webhook_url:
                 for project_set in team.project_sets():
-                    result = project_set.ensure_robot_project()
-                    if (
-                        not result["delivered"]
-                        and result["error"] != "webhook_disabled_or_missing_url"
-                    ):
-                        current_app.logger.warning(
-                            "Failed to sync Bot project project_set_id=%s: %s",
-                            project_set.id,
-                            result["error"],
-                        )
+                    project_set.ensure_robot_project()
             return {
                 "message": gettext("修改成功"),
                 "team": team.to_api(user=self.current_user),
@@ -336,13 +328,8 @@ class TeamProjectListAPI(MoeAPIView):
             target_languages=data["target_languages"],
             labelplus_txt=data["labelplus_txt"],
         )
+        # 机器人同步为异步执行，失败只会在后台记录警告日志，不影响项目创建本身
         result = project.ensure_robot_episode()
-        if not result["delivered"] and result["error"] != "webhook_disabled_or_missing_url":
-            current_app.logger.warning(
-                "Failed to sync Bot episode project_id=%s: %s",
-                project.id,
-                result["error"],
-            )
         return {
             "message": gettext("创建成功"),
             "project": project.to_api(user=self.current_user),
@@ -405,13 +392,8 @@ class TeamProjectImportAPI(MoeAPIView):
             target_languages=[data["output_language"]],
             labelplus_txt=labelplus_txt,
         )
-        result = project.ensure_robot_episode()
-        if not result["delivered"] and result["error"] != "webhook_disabled_or_missing_url":
-            current_app.logger.warning(
-                "Failed to sync imported Bot episode project_id=%s: %s",
-                project.id,
-                result["error"],
-            )
+        # 机器人同步为异步执行，失败只会在后台记录警告日志，不影响项目创建本身
+        project.ensure_robot_episode()
         return {
             "message": gettext("创建成功"),
             "project": project.to_api(user=self.current_user),
@@ -477,13 +459,8 @@ class TeamProjectSetListAPI(MoeAPIView):
         # 获取data
         data = self.get_json(ProjectSetsSchema())
         project_set = ProjectSet.create(name=data["name"], team=team)
+        # 机器人同步为异步执行，失败只会在后台记录警告日志，不影响项目集创建本身
         result = project_set.ensure_robot_project()
-        if not result["delivered"] and result["error"] != "webhook_disabled_or_missing_url":
-            current_app.logger.warning(
-                "Failed to sync Bot project project_set_id=%s: %s",
-                project_set.id,
-                result["error"],
-            )
         return {
             "message": gettext("创建成功"),
             "project_set": project_set.to_api(),
