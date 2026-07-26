@@ -1,10 +1,11 @@
-from marshmallow import fields, post_load, validates_schema
+from marshmallow import ValidationError, fields, post_load, validates_schema
 
 from app.models.team import Team
 from app.constants.role import RoleType
 from app.validators.custom_message import required_message
 from app.validators.custom_schema import DefaultSchema
 from app.validators.custom_validate import TeamValidate, need_in, object_id
+from app.validators.project import validate_robot_webhook_url
 
 
 class CreateTeamSchema(DefaultSchema):
@@ -57,6 +58,33 @@ class EditTeamSchema(DefaultSchema):
         validate=[need_in(Team.application_check_type_cls.ids())]
     )
     default_role = fields.Str(validate=[object_id])
+    robot_webhook_enabled = fields.Bool()
+    robot_webhook_url = fields.Str(validate=[validate_robot_webhook_url])
+    robot_webhook_auth_token = fields.Str()
+    robot_webhook_group_id = fields.Str()
+
+    @validates_schema
+    def verify_robot_webhook(self, data):
+        if not data.get("robot_webhook_enabled"):
+            return
+        webhook_url = data.get("robot_webhook_url", self.context["team"].robot_webhook_url)
+        auth_token = data.get(
+            "robot_webhook_auth_token", self.context["team"].robot_webhook_auth_token
+        )
+        group_id = data.get(
+            "robot_webhook_group_id", self.context["team"].robot_webhook_group_id
+        )
+        errors = {}
+        if not webhook_url:
+            errors["robot_webhook_url"] = ["请输入机器人服务地址"]
+        if not auth_token:
+            errors["robot_webhook_auth_token"] = ["请输入机器人鉴权 Token"]
+        if not group_id:
+            errors["robot_webhook_group_id"] = ["请输入机器人 QQ 群号"]
+        elif not group_id.isdigit():
+            errors["robot_webhook_group_id"] = ["机器人 QQ 群号只能包含数字"]
+        if errors:
+            raise ValidationError(errors)
 
     @validates_schema
     def verify_name(self, data):

@@ -322,9 +322,17 @@ class TeamProjectListAPI(MoeAPIView):
             target_languages=data["target_languages"],
             labelplus_txt=data["labelplus_txt"],
         )
+        result = project.ensure_robot_episode()
+        if not result["delivered"] and result["error"] != "webhook_disabled_or_missing_url":
+            current_app.logger.warning(
+                "Failed to sync Bot episode project_id=%s: %s",
+                project.id,
+                result["error"],
+            )
         return {
             "message": gettext("创建成功"),
             "project": project.to_api(user=self.current_user),
+            "robot_sync": result,
         }
 
 
@@ -383,6 +391,13 @@ class TeamProjectImportAPI(MoeAPIView):
             target_languages=[data["output_language"]],
             labelplus_txt=labelplus_txt,
         )
+        result = project.ensure_robot_episode()
+        if not result["delivered"] and result["error"] != "webhook_disabled_or_missing_url":
+            current_app.logger.warning(
+                "Failed to sync imported Bot episode project_id=%s: %s",
+                project.id,
+                result["error"],
+            )
         return {
             "message": gettext("创建成功"),
             "project": project.to_api(user=self.current_user),
@@ -448,7 +463,18 @@ class TeamProjectSetListAPI(MoeAPIView):
         # 获取data
         data = self.get_json(ProjectSetsSchema())
         project_set = ProjectSet.create(name=data["name"], team=team)
-        return {"message": gettext("创建成功"), "project_set": project_set.to_api()}
+        result = project_set.ensure_robot_project()
+        if not result["delivered"] and result["error"] != "webhook_disabled_or_missing_url":
+            current_app.logger.warning(
+                "Failed to sync Bot project project_set_id=%s: %s",
+                project_set.id,
+                result["error"],
+            )
+        return {
+            "message": gettext("创建成功"),
+            "project_set": project_set.to_api(),
+            "robot_sync": result,
+        }
 
 
 def get_insight_user_projects_data(

@@ -1,4 +1,5 @@
 from mongoengine import DoesNotExist
+from unittest.mock import patch
 
 from app.core.rbac import AllowApplyType, ApplicationCheckType
 from app.exceptions import (
@@ -473,6 +474,39 @@ class TeamAPITestCase(MoeAPITestCase):
             )
             self.assertEqual(member_role, team2.default_role)
             self.assertEqual("1", team2.intro)
+            # == 团队机器人配置 ==
+            data = self.put(
+                f"/v1/teams/{str(team2.id)}",
+                json={
+                    "robot_webhook_enabled": True,
+                    "robot_webhook_url": "https://bot.example.com/trans",
+                    "robot_webhook_auth_token": "secret-token",
+                },
+                token=token,
+            )
+            self.assertErrorEqual(data, ValidateError)
+            self.assertIsNotNone(
+                data.json["message"].get("robot_webhook_group_id")
+            )
+            data = self.put(
+                f"/v1/teams/{str(team2.id)}",
+                json={
+                    "robot_webhook_enabled": True,
+                    "robot_webhook_url": "https://bot.example.com/trans",
+                    "robot_webhook_auth_token": "secret-token",
+                    "robot_webhook_group_id": "123456789",
+                },
+                token=token,
+            )
+            self.assertErrorEqual(data)
+            team2.reload()
+            self.assertTrue(team2.robot_webhook_enabled)
+            self.assertEqual(
+                "https://bot.example.com/trans",
+                team2.robot_webhook_url,
+            )
+            self.assertEqual("secret-token", team2.robot_webhook_auth_token)
+            self.assertEqual("123456789", team2.robot_webhook_group_id)
 
     def test_delete_team(self):
         """
@@ -1080,14 +1114,30 @@ class TeamProjectSetAPITestCase(MoeAPITestCase):
             self.assertEqual(
                 DEFAULT_PROJECT_SETS_COUNT + 1, ProjectSet.objects.count()
             )  # team1带有一个默认项目集
-            # 创建project set
-            data = self.post(
-                f"/v1/teams/{str(team1.id)}/project-sets",
-                json={"name": "p1"},
-                token=token1,
+            team1.update(
+                robot_webhook_enabled=True,
+                robot_webhook_url="https://bot.example.com/trans",
+                robot_webhook_auth_token="secret-token",
+                robot_webhook_group_id="123456789",
             )
+            # 创建project set
+            with patch("app.models.project.requests.post") as mock_post:
+                mock_post.return_value.raise_for_status.return_value = None
+                data = self.post(
+                    f"/v1/teams/{str(team1.id)}/project-sets",
+                    json={"name": "p1"},
+                    token=token1,
+                )
             self.assertErrorEqual(data)
             self.assertEqual(DEFAULT_PROJECT_SETS_COUNT + 2, ProjectSet.objects.count())
+            self.assertEqual(
+                "https://bot.example.com/trans/project/ensure",
+                mock_post.call_args.args[0],
+            )
+            self.assertEqual(
+                {"name": "p1", "group_id": "123456789"},
+                mock_post.call_args.kwargs["json"],
+            )
             # == user2没有权限创建 ==
             data = self.post(
                 f"/v1/teams/{str(team1.id)}/project-sets",

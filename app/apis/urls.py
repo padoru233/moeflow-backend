@@ -37,6 +37,7 @@ from app.apis.project import (
     ProjectOCRAPI,
     ProjectOutputListAPI,
     ProjectResumeAPI,
+    ProjectTaskCompletionAPI,
     ProjectTargetListAPI,
     ProjectTargetOutputListAPI,
     ProjectMemberBatchAddAPI,
@@ -294,6 +295,11 @@ project.add_url_rule(
     "/<project_id>/resume",
     methods=["POST", "OPTIONS"],
     view_func=ProjectResumeAPI.as_view("project_resume"),
+)
+project.add_url_rule(
+    "/<project_id>/task-completion",
+    methods=["POST", "OPTIONS"],
+    view_func=ProjectTaskCompletionAPI.as_view("project_task_completion"),
 )
 project.add_url_rule(
     "/<project_id>/files",

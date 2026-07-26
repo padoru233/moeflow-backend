@@ -7,6 +7,7 @@ from bson import ObjectId
 from io import BufferedReader
 from flask import current_app
 from flask_babel import gettext, lazy_gettext
+import requests
 from app.tasks.import_from_labelplus import import_from_labelplus
 from mongoengine import (
     CASCADE,
@@ -72,6 +73,35 @@ from app.utils.mongo import mongo_order, mongo_slice
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+
+def notify_team_robot(team, endpoint, payload, timeout=5):
+    if not team.robot_webhook_enabled or not team.robot_webhook_url:
+        return {"delivered": False, "error": "webhook_disabled_or_missing_url"}
+    try:
+        headers = {}
+        if team.robot_webhook_auth_token:
+            headers["X-Auth-Token"] = team.robot_webhook_auth_token
+        webhook_url = team.robot_webhook_url.rstrip("/")
+        if webhook_url.endswith("/episode/complete"):
+            webhook_url = webhook_url[: -len("/episode/complete")]
+        response = requests.post(
+            webhook_url + endpoint,
+            json=payload,
+            headers=headers or None,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return {"delivered": True}
+    except requests.HTTPError as exc:
+        response = exc.response
+        try:
+            detail = response.json().get("detail")
+        except (AttributeError, ValueError):
+            detail = None
+        return {"delivered": False, "error": str(detail or exc)}
+    except Exception as exc:
+        return {"delivered": False, "error": str(exc)}
 
 
 class ProjectAllowApplyType(AllowApplyType):
@@ -309,6 +339,17 @@ class ProjectSet(Document):
         # TODO: 将项目集内项目移动到默认项目集
         self.delete()
 
+    def ensure_robot_project(self, timeout=5):
+        return notify_team_robot(
+            self.team,
+            "/project/ensure",
+            {
+                "name": self.name,
+                "group_id": self.team.robot_webhook_group_id,
+            },
+            timeout,
+        )
+
     @classmethod
     def by_id(cls, id: ObjectId):
         project_set = cls.objects(id=id).first()
@@ -356,7 +397,6 @@ class Project(GroupMixin, Document):
     system_finish_time = DateTimeField(db_field="ft")  # 项目被系统正式完结时间
     plan_finish_time = DateTimeField(db_field="pft")  # 用户操作计划完结时间
     plan_delete_time = DateTimeField(db_field="pdt")  # 用户操作计划删除时间
-
     # == 术语库 ==
     _term_banks = ListField(
         ReferenceField(TermBank, reverse_delete_rule=PULL),
@@ -855,6 +895,46 @@ class Project(GroupMixin, Document):
             unset__plan_finish_time=1,
         )
         self.reload()
+
+    def notify_robot(self, endpoint, payload, timeout=5):
+        return notify_team_robot(self.team, endpoint, payload, timeout)
+
+    def notify_completion(self, payload, timeout=5):
+        return self.notify_robot("/episode/complete", payload, timeout)
+
+    def notify_manual_completion(self, timeout=5):
+        return self.notify_robot(
+            "/episode/manual-complete",
+            {
+                "project_name": self.project_set.name,
+                "episode_title": self.name,
+            },
+            timeout,
+        )
+
+    def ensure_robot_episode(self, timeout=5):
+        return self.notify_robot(
+            "/episode/ensure",
+            {
+                "project_name": self.project_set.name,
+                "title": self.name,
+                "group_id": self.team.robot_webhook_group_id,
+            },
+            timeout,
+        )
+
+    def notify_member_change(self, user_name, role, action, timeout=5):
+        return self.notify_robot(
+            "/episode/member/sync",
+            {
+                "project_name": self.project_set.name,
+                "episode_title": self.name,
+                "user_name": user_name,
+                "role": role,
+                "action": action,
+            },
+            timeout,
+        )
 
     def plan_delete(self):
         """计划销毁项目"""

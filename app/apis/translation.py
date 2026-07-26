@@ -1,4 +1,5 @@
 import datetime
+import logging
 from app.core.views import MoeAPIView
 from app.decorators.auth import token_required
 from app.decorators.url import fetch_model
@@ -9,6 +10,9 @@ from app.validators.translation import (
     CreateTranslationSchema,
     EditTranslationSchema,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class SourceTranslationListAPI(MoeAPIView):
@@ -34,10 +38,20 @@ class SourceTranslationListAPI(MoeAPIView):
         if not self.current_user.can(source.file.project, ProjectPermission.ADD_TRA):
             raise NoPermissionError
         data = self.get_json(CreateTranslationSchema())
-        target = source.file.project.target_by_id(data["target_id"])
-        translation = source.create_translation(
-            data["content"], target=target, user=self.current_user
-        )
+        try:
+            target = source.file.project.target_by_id(data["target_id"])
+            translation = source.create_translation(
+                data["content"], target=target, user=self.current_user
+            )
+        except Exception:
+            logger.exception(
+                "Failed to save translation source_id=%s project_id=%s target_id=%s user_id=%s",
+                source.id,
+                source.file.project.id,
+                data["target_id"],
+                self.current_user.id,
+            )
+            raise
         if translation:
             return translation.to_api()
 

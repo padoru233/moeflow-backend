@@ -1,5 +1,6 @@
 from app.models.output import Output
 import datetime
+import logging
 import re
 from typing import NoReturn, Optional, Union
 
@@ -41,6 +42,8 @@ from app.regexs import EMAIL_REGEX, USER_NAME_REGEX
 from app.constants.locale import Locale
 from app.utils.hash import md5
 from app.utils.mongo import mongo_order, mongo_slice
+
+logger = logging.getLogger(__name__)
 
 
 class User(Document):
@@ -500,10 +503,25 @@ class User(Document):
         """离开某个group"""
         relation = self.get_relation(group)
         if relation:
+            role = relation.role
             # 删除关系
             relation.delete()
             # 减少团体人数计数
             group.update(dec__user_count=1)
+            if isinstance(group, Project):
+                result = group.notify_member_change(
+                    self.name, role.system_code, "removed"
+                )
+                if (
+                    not result["delivered"]
+                    and result["error"] != "webhook_disabled_or_missing_url"
+                ):
+                    logger.warning(
+                        "Failed to announce Bot member removal project_id=%s user_id=%s: %s",
+                        group.id,
+                        self.id,
+                        result["error"],
+                    )
 
     def get_role(self, group):
         """获取在group中的角色"""

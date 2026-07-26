@@ -7,6 +7,7 @@ from app.translations import lazy_gettext, gettext
 from mongoengine import (
     CASCADE,
     DENY,
+    BooleanField,
     Document,
     IntField,
     ReferenceField,
@@ -270,6 +271,10 @@ class Team(GroupMixin, Document):
     ocr_quota_google_used = IntField(db_field="og", default=0)  # 谷歌 VISION 解析的张数
     ocr_quota_with_end_time = IntField(db_field="ot", default=0)  # （弃用）有时限的限额
     ocr_quota_end_time = DateTimeField(db_field="ol")  # （弃用）
+    robot_webhook_enabled = BooleanField(db_field="rw", default=False)
+    robot_webhook_url = StringField(db_field="ru", default="")
+    robot_webhook_auth_token = StringField(db_field="rt", default="")
+    robot_webhook_group_id = StringField(db_field="rg", default="")
     # 各种相关类
     role_cls = TeamRole
     permission_cls = TeamPermission
@@ -491,6 +496,9 @@ class Team(GroupMixin, Document):
             "edit_time": self.edit_time.isoformat(),
             "ocr_quota_month": self.ocr_quota_month,
             "ocr_quota_used": self.ocr_quota_used,
+            "robot_webhook_enabled": self.robot_webhook_enabled,
+            "robot_webhook_url": self.robot_webhook_url,
+            "robot_webhook_group_id": self.robot_webhook_group_id,
         }
 
 

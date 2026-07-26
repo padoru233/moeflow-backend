@@ -125,7 +125,17 @@ class ProjectAPI(MoeAPIView):
         if not self.current_user.can(project, ProjectPermission.FINISH):
             raise NoPermissionError
         project.finish()
-        return {"message": gettext("完结项目成功")}
+        robot_sync = project.notify_manual_completion()
+        if (
+            not robot_sync["delivered"]
+            and robot_sync["error"] != "webhook_disabled_or_missing_url"
+        ):
+            current_app.logger.warning(
+                "Failed to manually complete Bot episode project_id=%s: %s",
+                project.id,
+                robot_sync["error"],
+            )
+        return {"message": gettext("完结项目成功"), "robot_sync": robot_sync}
 
 
 class ProjectResumeAPI(MoeAPIView):
@@ -156,6 +166,33 @@ class ProjectResumeAPI(MoeAPIView):
             raise NoPermissionError
         project.resume()
         return {"message": gettext("恢复项目成功")}
+
+
+class ProjectTaskCompletionAPI(MoeAPIView):
+    @token_required
+    @fetch_model(Project)
+    def post(self, project: Project):
+        if project.status != ProjectStatus.WORKING:
+            raise ProjectFinishedError
+        if not self.current_user.can(project, ProjectPermission.ACCESS):
+            raise NoPermissionError
+        role = self.current_user.get_role(project)
+        role_code = role.system_code if role else None
+        if role_code not in {
+            "translator",
+            "proofreader",
+            "picture_editor",
+            "coordinator",
+        }:
+            raise NoPermissionError(gettext("当前项目角色不能提交工序完成"))
+        return project.notify_completion(
+            {
+                "project_name": project.project_set.name,
+                "episode_title": project.name,
+                "user_name": self.current_user.name,
+                "role": role_code,
+            }
+        )
 
 
 class ProjectTargetListAPI(MoeAPIView):

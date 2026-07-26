@@ -1,4 +1,5 @@
 from marshmallow import fields, post_load, validates_schema
+from urllib.parse import urlparse
 
 from app.exceptions import ProjectSetNotExistError, LanguageNotExistError
 from app.models.project import Project, ProjectSet
@@ -15,6 +16,16 @@ from app.validators.custom_validate import (
 )
 from app.validators.custom_schema import DefaultSchema
 from marshmallow.exceptions import ValidationError
+
+
+def validate_robot_webhook_url(value):
+    if value in (None, ""):
+        return
+    if len(value) > 2048:
+        raise ValidationError("机器人 webhook 地址太长")
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValidationError("机器人 webhook 地址必须是合法的 http/https 链接")
 
 
 class ProjectSetsSchema(DefaultSchema):

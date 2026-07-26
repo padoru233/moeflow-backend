@@ -23,6 +23,7 @@ from app.models.team import Team
 from app.models.user import User
 from flask_apikit.exceptions import ValidateError
 from tests import MoeAPITestCase
+from unittest.mock import patch
 
 
 class ProjectAPITestCase(MoeAPITestCase):
@@ -440,6 +441,7 @@ class ProjectAPITestCase(MoeAPITestCase):
         project1.reload()
         self.assertErrorEqual(data)
         self.assertEqual(set2, project1.project_set)
+        # 修改机器人通知配置
         # 修改成team2的项目集报错
         data = self.put(
             f"/v1/projects/{str(project1.id)}",
@@ -449,6 +451,137 @@ class ProjectAPITestCase(MoeAPITestCase):
         project1.reload()
         self.assertErrorEqual(data, ProjectSetNotExistError)
         self.assertEqual(set2, project1.project_set)
+
+    def test_complete_project_task(self):
+        """测试项目角色提交当前工序完成"""
+        self.create_user("creator", "creator@1.com", "111111")
+        translator_token = self.create_user(
+            "translator", "translator@1.com", "111111"
+        ).generate_token()
+        creator = User.by_name("creator")
+        translator = User.by_name("translator")
+        team = Team.create(name="team", creator=creator)
+        project = Project.create(name="task", team=team, creator=creator)
+        translator.join(
+            project, role=ProjectRole.by_system_code("translator")
+        )
+        team.update(
+            robot_webhook_enabled=True,
+            robot_webhook_url="https://bot.example.com/trans",
+            robot_webhook_auth_token="secret-token",
+        )
+
+        with patch("app.models.project.requests.post") as mock_post:
+            mock_post.return_value.raise_for_status.return_value = None
+            data = self.post(
+                f"/v1/projects/{str(project.id)}/task-completion",
+                token=translator_token,
+            )
+
+        self.assertErrorEqual(data)
+        self.assertTrue(data.json["delivered"])
+        self.assertEqual(
+            "https://bot.example.com/trans/episode/complete",
+            mock_post.call_args.args[0],
+        )
+        self.assertEqual(
+            {
+                "project_name": team.default_project_set.name,
+                "episode_title": "task",
+                "user_name": "translator",
+                "role": "translator",
+            },
+            mock_post.call_args.kwargs["json"],
+        )
+        self.assertEqual(
+            {"X-Auth-Token": "secret-token"}, mock_post.call_args.kwargs["headers"]
+        )
+
+    def test_do_not_notify_robot_when_project_member_joins(self):
+        """测试项目新增成员不通知机器人"""
+        self.create_user("creator", "creator@1.com", "111111")
+        self.create_user("translator", "translator@1.com", "111111")
+        creator = User.by_name("creator")
+        translator = User.by_name("translator")
+        team = Team.create(name="team", creator=creator)
+        project = Project.create(name="task", team=team, creator=creator)
+        team.update(
+            robot_webhook_enabled=True,
+            robot_webhook_url="https://bot.example.com/trans",
+            robot_webhook_auth_token="secret-token",
+        )
+
+        with patch("app.models.project.requests.post") as mock_post:
+            mock_post.return_value.raise_for_status.return_value = None
+            translator.join(
+                project, role=ProjectRole.by_system_code("translator")
+            )
+
+        mock_post.assert_not_called()
+
+    def test_do_not_sync_project_creator_to_robot(self):
+        """测试创建项目时不向机器人同步创建者"""
+        self.create_user("creator", "creator@1.com", "111111")
+        creator = User.by_name("creator")
+        team = Team.create(name="team", creator=creator)
+        team.update(
+            robot_webhook_enabled=True,
+            robot_webhook_url="https://bot.example.com/trans",
+            robot_webhook_auth_token="secret-token",
+        )
+
+        with patch("app.models.project.requests.post") as mock_post:
+            Project.create(name="task", team=team, creator=creator)
+
+        mock_post.assert_not_called()
+
+    def test_create_project_ensures_robot_episode(self):
+        """测试创建萌翻项目时同步创建或复用机器人话数"""
+        token = self.create_user("creator", "creator@1.com", "111111").generate_token()
+        creator = User.by_name("creator")
+        team = Team.create(name="team", creator=creator)
+        team.update(
+            robot_webhook_enabled=True,
+            robot_webhook_url="https://bot.example.com/trans",
+            robot_webhook_auth_token="secret-token",
+            robot_webhook_group_id="123456789",
+        )
+
+        with patch("app.models.project.requests.post") as mock_post:
+            mock_post.return_value.raise_for_status.return_value = None
+            data = self.post(
+                f"/v1/teams/{str(team.id)}/projects",
+                token=token,
+                json={
+                    "name": "task",
+                    "intro": "",
+                    "project_set": str(team.default_project_set.id),
+                    "allow_apply_type": Project.allow_apply_type_cls.TEAM_USER,
+                    "application_check_type": Project.application_check_type_cls.ADMIN_CHECK,
+                    "default_role": str(
+                        Project.role_cls.by_system_code("translator").id
+                    ),
+                    "source_language": "ja",
+                    "target_languages": ["zh-CN"],
+                },
+            )
+
+        self.assertErrorEqual(data)
+        self.assertEqual(
+            "https://bot.example.com/trans/episode/ensure",
+            mock_post.call_args.args[0],
+        )
+        self.assertEqual(
+            {
+                "project_name": team.default_project_set.name,
+                "title": "task",
+                "group_id": "123456789",
+            },
+            mock_post.call_args.kwargs["json"],
+        )
+        self.assertEqual(
+            {"X-Auth-Token": "secret-token"}, mock_post.call_args.kwargs["headers"]
+        )
 
     def test_plan_finish_project1(self):
         """
@@ -1700,6 +1833,36 @@ class ProjectAPITestCase(MoeAPITestCase):
         project.finish()
         data = self.delete(f"/v1/projects/{str(project.id)}", token=token)
         self.assertErrorEqual(data, ProjectFinishedError)
+
+    def test_finish_project_manually_completes_robot_episode(self):
+        """测试管理员完结萌翻项目时同步完结 Bot 话数"""
+        creator = self.create_user("creator", "creator@1.com", "111111")
+        token = creator.generate_token()
+        team = Team.create(name="team", creator=creator)
+        project = Project.create(name="episode", team=team, creator=creator)
+        team.update(
+            robot_webhook_enabled=True,
+            robot_webhook_url="https://bot.example.com/trans",
+            robot_webhook_auth_token="secret-token",
+        )
+
+        with patch("app.models.project.requests.post") as mock_post:
+            mock_post.return_value.raise_for_status.return_value = None
+            data = self.delete(f"/v1/projects/{str(project.id)}", token=token)
+
+        self.assertErrorEqual(data)
+        self.assertTrue(data.json["robot_sync"]["delivered"])
+        self.assertEqual(
+            "https://bot.example.com/trans/episode/manual-complete",
+            mock_post.call_args.args[0],
+        )
+        self.assertEqual(
+            {
+                "project_name": team.default_project_set.name,
+                "episode_title": "episode",
+            },
+            mock_post.call_args.kwargs["json"],
+        )
 
     def test_create_project_with_labelplus_txt1(self):
         """测试创建项目使用空 labelplus_txt"""
