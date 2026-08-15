@@ -6,6 +6,7 @@ from app.apis.file import (
     FileAPI,
     FileOCRAPI,
     ProjectFileListAPI,
+    ProjectServerImportAPI,
     AdminFileListAPI,
 )
 from app.apis.index import PingAPI, DocsAPI, ErrorAPI, UrlListAPI, WarningAPI
@@ -305,6 +306,11 @@ project.add_url_rule(
     "/<project_id>/files",
     methods=["GET", "POST", "OPTIONS"],
     view_func=ProjectFileListAPI.as_view("project_file_list"),
+)
+project.add_url_rule(
+    "/<project_id>/server-imports",
+    methods=["GET", "POST", "OPTIONS"],
+    view_func=ProjectServerImportAPI.as_view("project_server_import"),
 )
 project.add_url_rule(
     "/<project_id>/targets",

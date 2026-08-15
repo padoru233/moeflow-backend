@@ -264,6 +264,15 @@ class FileModelTestCase(MoeTestCase):
                 self.assertEqual("A.JPg", file2.name)
                 self.assertEqual(file1, file2)
 
+    def test_upload_webp_file(self):
+        """测试 WebP 图片可以上传"""
+        with self.app.test_request_context():
+            with open(os.path.join(TEST_FILE_PATH, "1kbA.txt"), "rb") as file:
+                team = Team.create("t1")
+                project = Project.create("p1", team=team)
+                uploaded_file = project.upload("image.WeBp", file)
+                self.assertEqual(FileType.IMAGE, uploaded_file.type)
+
     def test_upload_file_reset_safe_status(self):
         """测试覆盖文件时，会重置安全检查状态"""
         with self.app.test_request_context():

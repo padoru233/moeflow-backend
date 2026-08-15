@@ -1,5 +1,8 @@
 from app.exceptions.project import ProjectFinishedError
-from flask import request
+from io import BytesIO
+from pathlib import Path
+from zipfile import BadZipFile, ZipFile
+from flask import current_app, request
 from flask_babel import gettext
 
 from app.core.responses import MoePagination
@@ -21,6 +24,7 @@ from app.validators.file import (
 from app.constants.file import FileSafeStatus
 from flask_apikit.exceptions import ValidateError
 from flask_apikit.utils import QueryParser
+from werkzeug.datastructures import FileStorage
 
 
 class ProjectFileListAPI(MoeAPIView):
@@ -134,6 +138,93 @@ class ProjectFileListAPI(MoeAPIView):
         data = file.to_api()
         data["upload_overwrite"] = old_file is not None
         return data
+
+
+class ProjectServerImportAPI(MoeAPIView):
+    @token_required
+    @fetch_model(Project)
+    def get(self, project: Project):
+        if not self.current_user.can(project, ProjectPermission.ADD_FILE):
+            raise NoPermissionError(gettext("您没有此项目的上传文件权限"))
+        import_directory = current_app.config.get("IMPORT_DIRECTORY")
+        if not import_directory:
+            return {"directory": "", "entries": []}
+        root = Path(import_directory).resolve()
+        requested_directory = request.args.get("directory", "")
+        try:
+            directory = (root / requested_directory).resolve()
+            relative_directory = directory.relative_to(root)
+        except ValueError:
+            raise ValidateError({"directory": [gettext("导入目录不存在")]})
+        if not directory.is_dir():
+            raise ValidateError({"directory": [gettext("导入目录不存在")]})
+        entries = [
+            {
+                "name": path.name,
+                "path": str((relative_directory / path.name).as_posix()),
+                "type": "directory" if path.is_dir() else "file",
+            }
+            for path in sorted(
+                directory.iterdir(),
+                key=lambda item: (not item.is_dir(), item.name.lower()),
+            )
+        ]
+        return {
+            "directory": (
+                "" if relative_directory == Path(".") else str(relative_directory)
+            ),
+            "entries": entries,
+        }
+
+    @token_required
+    @fetch_model(Project)
+    def post(self, project: Project):
+        if project.status != ProjectStatus.WORKING:
+            raise ProjectFinishedError
+        if not self.current_user.can(project, ProjectPermission.ADD_FILE):
+            raise NoPermissionError(gettext("您没有此项目的上传文件权限"))
+        import_directory = current_app.config.get("IMPORT_DIRECTORY")
+        archive_path = request.form.get("archive_path")
+        if not import_directory or not archive_path:
+            raise ValidateError({"archive_path": [gettext("导入文件不存在")]})
+        root = Path(import_directory).resolve()
+        try:
+            path = (root / archive_path).resolve()
+            path.relative_to(root)
+        except ValueError:
+            raise ValidateError({"archive_path": [gettext("导入文件不存在")]})
+        if (
+            not path.is_file()
+            or path.suffix.lower() not in {".zip", ".cbz"}
+        ):
+            raise ValidateError({"archive_path": [gettext("导入文件不存在")]})
+        try:
+            archive = ZipFile(path)
+        except BadZipFile:
+            raise ValidateError({"archive_path": [gettext("导入文件格式不正确")]})
+        uploaded_files = []
+        try:
+            for entry in archive.infolist():
+                filename = Path(entry.filename).name
+                if (
+                    entry.is_dir()
+                    or FileType.by_suffix(Path(filename).suffix[1:])
+                    != FileType.IMAGE
+                ):
+                    continue
+                uploaded_files.append(
+                    project.upload(
+                        filename,
+                        FileStorage(stream=BytesIO(archive.read(entry)), filename=filename),
+                    ).to_api()
+                )
+        finally:
+            archive.close()
+        if not uploaded_files:
+            raise ValidateError(
+                {"archive_path": [gettext("压缩包内没有可导入的图片")]}
+            )
+        return {"files": uploaded_files}
 
 
 class FileAPI(MoeAPIView):

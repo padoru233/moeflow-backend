@@ -48,6 +48,8 @@ PLAN_FINISH_DELTA = 7 * 24 * 60 * 60  # 计划完结延时时间
 PLAN_DELETE_DELTA = 7 * 24 * 60 * 60  # 计划删除延时时间
 OUTPUT_WAIT_SECONDS = 60 * 5  # 导出等待时间
 BUILD_ID = env.get("MOEFLOW_BUILD_ID", "unset")
+# 仅允许从此目录选择项目导入 ZIP；未配置时不暴露服务器文件导入。
+IMPORT_DIRECTORY = env.get("MOEFLOW_IMPORT_DIRECTORY")
 # -----------
 # 默认设置
 # -----------
