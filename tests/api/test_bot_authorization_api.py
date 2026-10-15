@@ -1,4 +1,5 @@
 from app.apis.bot_authorization import create_code_challenge
+from app.models.team import TeamRole
 from flask_apikit.exceptions import ValidateError
 from tests import MoeAPITestCase
 
@@ -84,3 +85,44 @@ class BotAuthorizationAPITestCase(MoeAPITestCase):
             },
         )
         self.assertErrorEqual(exchanged, ValidateError)
+
+    def exchange_for(self, user):
+        redirect_uri = "https://bot.example.com/trans/auth/moeflow/callback"
+        verifier = "c" * 64
+        created = self.post(
+            "/v1/bot-authorization/codes",
+            token=user.generate_token(),
+            json={
+                "client_id": "trans-progress",
+                "redirect_uri": redirect_uri,
+                "code_challenge": create_code_challenge(verifier),
+            },
+        )
+        self.assertErrorEqual(created)
+        exchanged = self.post(
+            "/v1/bot-authorization/tokens",
+            json={
+                "client_id": "trans-progress",
+                "client_secret": "bot-client-secret",
+                "redirect_uri": redirect_uri,
+                "code": created.json["code"],
+                "code_verifier": verifier,
+            },
+        )
+        self.assertErrorEqual(exchanged)
+        return exchanged.json
+
+    def test_reports_only_teams_the_user_creates_or_administers(self):
+        team = self.create_team("owned")
+        creator = self.get_creator(team)
+        admin = self.create_user("team-admin")
+        admin.join(team, TeamRole.by_system_code("admin"))
+        member = self.create_user("team-member")
+        member.join(team, TeamRole.by_system_code("member"))
+        outsider = self.create_user("outsider")
+
+        expected = [{"id": str(team.id), "name": team.name}]
+        self.assertEqual(self.exchange_for(creator)["admin_teams"], expected)
+        self.assertEqual(self.exchange_for(admin)["admin_teams"], expected)
+        self.assertEqual(self.exchange_for(member)["admin_teams"], [])
+        self.assertEqual(self.exchange_for(outsider)["admin_teams"], [])

@@ -11,6 +11,7 @@ from app.core.views import MoeAPIView
 from app.decorators.auth import token_required
 from app.exceptions import NoPermissionError
 from app.models.bot_authorization import BotAuthorizationCode
+from app.models.team import TeamRole, TeamUserRelation
 from app.models.user import User
 from app.validators.bot_authorization import (
     BotAuthorizationCodeSchema,
@@ -47,6 +48,16 @@ def sha256(value: str) -> str:
 def create_code_challenge(verifier: str) -> str:
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def get_administered_teams(user: User) -> list[dict[str, str]]:
+    """Teams where the user is the creator or an administrator."""
+    roles = TeamRole.objects(system_code__in=["creator", "admin"])
+    relations = TeamUserRelation.objects(user=user, role__in=list(roles))
+    return [
+        {"id": str(relation.group.id), "name": relation.group.name}
+        for relation in relations
+    ]
 
 
 class BotAuthorizationCodeAPI(MoeAPIView):
@@ -98,4 +109,5 @@ class BotAuthorizationTokenAPI(MoeAPIView):
             "subject": str(user.id),
             "name": user.name,
             "admin": user.admin,
+            "admin_teams": get_administered_teams(user),
         }
