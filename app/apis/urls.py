@@ -23,6 +23,10 @@ from app.apis.me import (
     MeRelatedApplicationListAPI,
 )
 from app.apis.avatar import AvatarAPI
+from app.apis.bot_authorization import (
+    BotAuthorizationCodeAPI,
+    BotAuthorizationTokenAPI,
+)
 from app.apis.site_setting import HomepageAPI, SiteSettingAPI
 from app.apis.user import (
     AdminUserAPI,
@@ -170,6 +174,20 @@ me.add_url_rule(
     "/teams",
     methods=["GET", "OPTIONS"],
     view_func=MeTeamListAPI.as_view("me_team_list"),
+)
+# First-party Bot authorization-code exchange.
+bot_authorization = Blueprint(
+    "bot_authorization", __name__, url_prefix=v1_prefix + "/bot-authorization"
+)
+bot_authorization.add_url_rule(
+    "/codes",
+    methods=["POST", "OPTIONS"],
+    view_func=BotAuthorizationCodeAPI.as_view("bot_authorization_code"),
+)
+bot_authorization.add_url_rule(
+    "/tokens",
+    methods=["POST", "OPTIONS"],
+    view_func=BotAuthorizationTokenAPI.as_view("bot_authorization_token"),
 )
 # 验证码模块
 v_code = Blueprint("v_code", __name__, url_prefix=v1_prefix)

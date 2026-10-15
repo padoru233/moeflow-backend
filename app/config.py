@@ -4,6 +4,7 @@
 # ===========
 import dotenv
 from os import environ as env
+import json
 import urllib.parse as urlparse
 
 dotenv.load_dotenv()
@@ -50,6 +51,9 @@ OUTPUT_WAIT_SECONDS = 60 * 5  # 导出等待时间
 BUILD_ID = env.get("MOEFLOW_BUILD_ID", "unset")
 # 仅允许从此目录选择项目导入 ZIP；未配置时不暴露服务器文件导入。
 IMPORT_DIRECTORY = env.get("MOEFLOW_IMPORT_DIRECTORY")
+# OAuth-style authorization-code clients for first-party integrations. The
+# JSON value maps each client ID to its secret and exact redirect URI list.
+BOT_AUTHORIZATION_CLIENTS = json.loads(env.get("BOT_AUTHORIZATION_CLIENTS", "{}"))
 # -----------
 # 默认设置
 # -----------
